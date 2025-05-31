@@ -23,7 +23,7 @@ class Client():
 		self.model = model
 		self.loss_fn = loss_fn
 		self.dataset = dataset
-		self.train_loader = torch.utils.data.DataLoader(self.dataset, batch_size=32, shuffle=True, num_workers=4)
+		self.train_loader = torch.utils.data.DataLoader(self.dataset, batch_size=self.args["batch_size"], shuffle=True, num_workers=0)
 
 		self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 		self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -34,7 +34,6 @@ class Client():
 
 		self.government = None
 
-		self.update = None
 		self.round = 0
 
 	def to(self, device):
@@ -93,7 +92,7 @@ class Client():
 			start = time.time()
 			print(f"Epoch {local_epoch+1}/{self.args['num_epochs']}... ", end="")
 
-			for i, (inputs, labels) in enumerate(self.train_loader):
+			for inputs, labels in self.train_loader:
 				optimizer.zero_grad()
 				inputs, labels = inputs.to(device=self.device, non_blocking=True), labels.to(device=self.device, non_blocking=True)
 				outputs = self.model(inputs)
@@ -104,8 +103,6 @@ class Client():
 			end = time.time()
 			train_time = end - start
 			print(f"Done! ({train_time:.1f}s)")
-
-		self.finish_training()
 
 	def finish_training(self):
 		self.socket.sendall(f"Training Complete, {len(self.dataset)}, {self.server.getsockname()}".replace("(","").replace(")","").replace("'","").encode()) # Notify Server That Training Is Complete
@@ -267,7 +264,6 @@ class Client():
 				self.socket.connect(self.government)
 				break
 			except:
-				print("Waiting To Connect...")
 				time.sleep(0.5)
 
 		print("Connected To Server!")

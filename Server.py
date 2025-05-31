@@ -13,7 +13,7 @@ import pickle
 from collections import OrderedDict
 
 class Server():
-	def __init__(self, model, port=65432, buffer_cap=9):
+	def __init__(self, model, port, buffer_size, args):
 		# Model Initialisation
 		self.model = model
 
@@ -23,13 +23,14 @@ class Server():
 		self.socket.bind(('', port))
 
 		# Buffer Initialisation
-		self.buffer_cap = buffer_cap
+		self.buffer_cap = buffer_size
 		self.buffer = []
+		self.round = 0
 
 		# Patches Initialisation
 		self.patches = {}
 
-		self.round = 0
+		self.args = args
 	
 	def buffer_client(self, client, address, data):
 		print(f"Adding {address} To Buffer...")
@@ -86,6 +87,9 @@ class Server():
 		torch.save(state_dict, 'model.pt')
 
 		print("Saving Patched `state_dict` To Disk... ", end="")
+
+		self.evaluate()
+		
 		print("Done!")
 
 	def listen_helper(self, client, address):
@@ -125,7 +129,26 @@ class Server():
 
 	def evaluate(self):
 		self.model.eval()
-		print("Should Evaluate Model")
+
+		with torch.no_grad():
+			testloader = torch.utils.data.DataLoader(self.args["testset"], batch_size=32, shuffle=True, num_workers=0)
+			loss_fn = nn.CrossEntropyLoss()
+
+			num_batches = len(testloader)
+			size = len(self.args["testset"])
+
+			test_loss, correct = 0, 0
+
+			for inputs, labels in testloader:
+				inputs, labels = inputs.to(device=self.args["device"], non_blocking=True), labels.to(device=self.args["device"], non_blocking=True)
+				outputs = self.model(inputs)
+				test_loss += loss_fn(outputs, labels).item()
+				correct += (outputs.argmax(1) == labels).type(torch.float).sum().item()
+			
+			test_loss /= num_batches
+			correct /= size
+
+			print(f"Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f}")
 
 if __name__ == "__main__":
 	model = resnet18()
