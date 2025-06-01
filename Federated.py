@@ -107,7 +107,7 @@ if __name__ == "__main__":
 	parser.add_argument("--round_decay", type=int, default=0.99, help="Round decay for updates")
 	
 	# Miscellaneous Arguments
-	parser.add_argument("--verbose", type=bool)
+	parser.add_argument("--verbose", action="store_true")
 	parser.add_argument("--device", type=str, default="cuda", choices=["cuda", "mps", "cpu"])
 	parser.add_argument("--model", type=str, default="resnet18", choices=["resnet18"], help="AI model that will be trained")
 	parser.add_argument("--max_concurrency", type=int, default=4, help="Max number of clients allowed to simultaneously operate")

@@ -47,16 +47,16 @@ class Client():
 
 		self.socket.connect(self.government)
 
-		if self.args.verbose: print("Fetching Model Size... ", end="")
+		if self.args["verbose"]: print("Fetching Model Size... ", end="")
 
 		data_size = b''
 		while len(data_size) < 4:
 			data_size += self.socket.recv(4 - len(data_size))
 		data_size = struct.unpack(">I", data_size)[0]
 		
-		if self.args.verbose: print(f"Done! ({data_size/1024/1024:.1f}MB)")
+		if self.args["verbose"]: print(f"Done! ({data_size/1024/1024:.1f}MB)")
 
-		if self.args.verbose: print("Fetching Model Weights... ", end="")
+		if self.args["verbose"]: print("Fetching Model Weights... ", end="")
 
 		buffer = io.BytesIO()
 		while data_size != 0:
@@ -68,9 +68,9 @@ class Client():
 		loaded = torch.load(buffer, weights_only=True)
 		self.model.load_state_dict(loaded)
 
-		if self.args.verbose: print("Done!")
+		if self.args["verbose"]: print("Done!")
 
-		if self.args.verbose: print("Fetching Round Number... ", end="")
+		if self.args["verbose"]: print("Fetching Round Number... ", end="")
 
 		self.socket.sendall(b"Round Number")
 		self.round = b''
@@ -78,10 +78,10 @@ class Client():
 			self.round += self.socket.recv(4 - len(self.round))
 		self.round = struct.unpack(">I", self.round)[0]
 
-		if self.args.verbose: print("Done!")
+		if self.args["verbose"]: print("Done!")
 
 	def train(self):
-		if self.args.verbose: print("Beginning Training...")
+		if self.args["verbose"]: print("Beginning Training...")
 
 		self.model.train()
 		
@@ -90,7 +90,7 @@ class Client():
 
 		for local_epoch in range(self.args["num_epochs"]):
 			start = time.time()
-			if self.args.verbose: print(f"Epoch {local_epoch+1}/{self.args['num_epochs']}... ", end="")
+			if self.args["verbose"]: print(f"Epoch {local_epoch+1}/{self.args['num_epochs']}... ", end="")
 
 			for inputs, labels in self.train_loader:
 				optimizer.zero_grad()
@@ -102,7 +102,7 @@ class Client():
 
 			end = time.time()
 			train_time = end - start
-			if self.args.verbose: print(f"Done! ({train_time:.1f}s)")
+			if self.args["verbose"]: print(f"Done! ({train_time:.1f}s)")
 
 	def finish_training(self):
 		self.socket.sendall(f"Training Complete, {len(self.dataset)}, {self.server.getsockname()}".replace("(","").replace(")","").replace("'","").encode()) # Notify Server That Training Is Complete
@@ -120,12 +120,12 @@ class Client():
 			buffer_info[i][2] = buffer_info[i][2].split(":")
 			buffer_info[i][2][1] = int(buffer_info[i][2][1])
 			buffer_info[i][2] = tuple(buffer_info[i][2])
-			if self.args.verbose: print("Client In Buffer: ", buffer_info[i])
+			if self.args["verbose"]: print("Client In Buffer: ", buffer_info[i])
 
 		self.aggregate(buffer_info)
 		
 	def aggregate(self, buffer_info):
-		if self.args.verbose: print("Beginning Aggregation...")
+		if self.args["verbose"]: print("Beginning Aggregation...")
 		self_info = self.socket.getsockname()
 		id = -1
 		for i, [N, client, server] in enumerate(buffer_info):
@@ -133,10 +133,10 @@ class Client():
 				id = i
 				break
 		if id == -1:
-			if self.args.verbose: print("Client Is Not Member Of Buffer")
+			if self.args["verbose"]: print("Client Is Not Member Of Buffer")
 			return self.disconnect()
 
-		if self.args.verbose: print(f"Generating Patches... ", end="")
+		if self.args["verbose"]: print(f"Generating Patches... ", end="")
 
 		num_patches = len(buffer_info)
 		patches = [OrderedDict() for i in range(num_patches)]
@@ -151,9 +151,9 @@ class Client():
 				ending_index = params_flat.size(0) if num_patches - 1 == index else starting_index + length
 				patches[index][key] = params_flat[starting_index:ending_index].clone()
 		
-		if self.args.verbose: print("Done!")
+		if self.args["verbose"]: print("Done!")
 
-		if self.args.verbose: print(f"Handling Patch {id}...")
+		if self.args["verbose"]: print(f"Handling Patch {id}...")
 		
 		self.disconnect()
 
@@ -182,7 +182,7 @@ class Client():
 					break
 			
 			if index == -1:
-				if self.args.verbose: print("Client Not In Buffer...")
+				if self.args["verbose"]: print("Client Not In Buffer...")
 				client.close()
 				continue
 
@@ -199,7 +199,7 @@ class Client():
 		client.sendall(bytes)
 	
 	def compute_patch(self, id, buffer_info, patch):
-		if self.args.verbose: print(f"Should Compute Patch {id}...")
+		if self.args["verbose"]: print(f"Should Compute Patch {id}...")
 		self.disconnect()
 
 		for key in patch.keys():
@@ -207,7 +207,7 @@ class Client():
 
 		for i, [N, client_sock, server_sock] in enumerate(buffer_info):
 			if id == i: continue
-			if self.args.verbose: print(f"Fetching Client {i}'s Model Patch {id}: ", end="\r")
+			if self.args["verbose"]: print(f"Fetching Client {i}'s Model Patch {id}: ", end="\r")
 			self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 			self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 			self.socket.bind(buffer_info[id][1])
@@ -217,7 +217,7 @@ class Client():
 					self.socket.connect(server_sock)
 					break
 				except:
-					if self.args.verbose: print("Waiting To Connect...")
+					if self.args["verbose"]: print("Waiting To Connect...")
 					time.sleep(0.5)
 
 			data_size = b''
@@ -225,7 +225,7 @@ class Client():
 				data_size += self.socket.recv(4 - len(data_size))
 			data_size = struct.unpack(">I", data_size)[0]
 
-			if self.args.verbose: print(f"Fetching Client {i}'s Model Patch {id} (0.0MB/{data_size/1024/1024:.1f}MB): [{' ' * 20}]", end="\r")
+			if self.args["verbose"]: print(f"Fetching Client {i}'s Model Patch {id} (0.0MB/{data_size/1024/1024:.1f}MB): [{' ' * 20}]", end="\r")
 
 			result = b""
 
@@ -233,11 +233,11 @@ class Client():
 				data = self.socket.recv(1024)
 				result += data
 				num_equals = int(len(result)/data_size*20)
-				if self.args.verbose: print(f"Fetching Client {i}'s Model Patch {id} ({len(result)/1024/1024:.1f}MB/{data_size/1024/1024:.1f}MB): [{'=' * num_equals + ' ' * (20 - num_equals)}]", end="\r")
+				if self.args["verbose"]: print(f"Fetching Client {i}'s Model Patch {id} ({len(result)/1024/1024:.1f}MB/{data_size/1024/1024:.1f}MB): [{'=' * num_equals + ' ' * (20 - num_equals)}]", end="\r")
 			
 			received_patch = pickle.loads(result)
 
-			if self.args.verbose:
+			if self.args["verbose"]:
 				print(end='\x1b[2K')
 				print(f"Fetching Client {i}'s Model Patch {id}: Done!")
 
@@ -251,7 +251,7 @@ class Client():
 		for key in patch.keys():
 			patch[key] = patch[key]/N
 
-		if self.args.verbose:
+		if self.args["verbose"]:
 			print(f"Finished Computing Patch {id}!")
 			print(f"Sending Server Patch {id}...")
 
@@ -268,7 +268,7 @@ class Client():
 			except:
 				time.sleep(0.5)
 
-		if self.args.verbose: print("Connected To Server!")
+		if self.args["verbose"]: print("Connected To Server!")
 
 		self.socket.sendall(struct.pack('>I', len(bytes)))
 		self.socket.sendall(bytes)
