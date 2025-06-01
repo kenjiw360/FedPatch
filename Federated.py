@@ -29,10 +29,9 @@ def server_threading_lambda(args):
 
 	server = Server(model, port=args.port, buffer_size=args.buffer_size, args={
 		"device": torch.device(args.device),
-		"testset": testset
+		"testset": testset,
+		"verbose": args.verbose
 	})
-
-	server.evaluate()
 
 	server.listen()
 
@@ -64,7 +63,8 @@ def client_threading_lambda(index, dataset, occupied, condition, args):
 		"lr_decay": args.lr_decay,
 		"w_decay": args.weight_decay,
 		"num_epochs": args.num_epochs,
-		"batch_size": args.batch_size
+		"batch_size": args.batch_size,
+		"verbose": args.verbose
 	})
 
 	client.to(torch.device(args.device))
@@ -73,7 +73,7 @@ def client_threading_lambda(index, dataset, occupied, condition, args):
 
 	client.train()
 
-	print(f"Training On Thread {index} Done!")
+	if args.verbose: print(f"Training On Thread {index} Done!")
 	occupied[process] -= 1
 
 	with condition:
@@ -81,7 +81,7 @@ def client_threading_lambda(index, dataset, occupied, condition, args):
 
 	client.finish_training()
 
-	print(f"Client On Thread {index} Done!")
+	if args.verbose: print(f"Client On Thread {index} Done!")
 
 def initialise_client(arr):
 	global occupied
@@ -107,8 +107,9 @@ if __name__ == "__main__":
 	parser.add_argument("--round_decay", type=int, default=0.99, help="Round decay for updates")
 	
 	# Miscellaneous Arguments
-	parser.add_argument("--device", default="cuda", choices=["cuda", "mps", "cpu"])
-	parser.add_argument("--model", default="resnet18", choices=["resnet18"], help="AI model that will be trained")
+	parser.add_argument("--verbose", type=bool)
+	parser.add_argument("--device", type=str, default="cuda", choices=["cuda", "mps", "cpu"])
+	parser.add_argument("--model", type=str, default="resnet18", choices=["resnet18"], help="AI model that will be trained")
 	parser.add_argument("--max_concurrency", type=int, default=4, help="Max number of clients allowed to simultaneously operate")
 	parser.add_argument("--patching_algorithm", type=int, default=0, choices=range(2), help="ID of wanted patching algorithm (0-1)")
 
@@ -134,4 +135,4 @@ if __name__ == "__main__":
 
 	for process in client_pool: process.start()
 
-	print("done!")
+	print("Done!")

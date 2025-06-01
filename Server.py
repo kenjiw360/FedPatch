@@ -33,7 +33,7 @@ class Server():
 		self.args = args
 	
 	def buffer_client(self, client, address, data):
-		print(f"Adding {address} To Buffer...")
+		if self.args.verbose: print(f"Adding {address} To Buffer...")
 
 		decoded = data.decode().replace("Training Complete, ", "").split(", ")
 
@@ -44,9 +44,9 @@ class Server():
 		print(size, server_info)
 
 		self.buffer.append((client, address, size, server_info)) # Add Client Into Buffer
-		print(f"Buffer Population: {len(self.buffer)}/{self.buffer_cap}")
+		if self.args.verbose: print(f"Buffer Population: {len(self.buffer)}/{self.buffer_cap}")
 		if len(self.buffer) == self.buffer_cap:
-			print("Beginning Decentralised Aggregation...")
+			if self.args.verbose: print("Beginning Decentralised Aggregation...")
 			# Kick Off Decentralised Aggregation
 			for i in range(len(self.buffer)): self.buffer[i][0].sendall(f"Decentralised Aggregation: {', '.join([f'{N}#{address[0]}:{address[1]}#{server_address[0]}:{server_address[1]}' for (client, address, N, server_address) in self.buffer])}".encode())
 
@@ -72,28 +72,28 @@ class Server():
 		for patch_info in self.patches:
 			if patch_info[1] == None: return
 
-		print("Received All Patches, Beginning Stitching Process...")
+		if self.args.verbose: print("Received All Patches, Beginning Stitching Process...")
 		
 		state_dict = OrderedDict()
 		for name, param in self.model.state_dict().items():
 			state_dict[name] = torch.reshape(torch.cat([patch[name] for [addr, patch] in self.patches]).flatten(), param.shape)
 		
-		print("Finished Stitching Together All Patches!")
+		if self.args.verbose: print("Finished Stitching Together All Patches!")
 
-		print("Loading Patched `state_dict` Into Model... ", end="")
+		if self.args.verbose: print("Loading Patched `state_dict` Into Model... ", end="")
 		self.model.load_state_dict(state_dict)
-		print("Done!")
+		if self.args.verbose: print("Done!")
 
 		torch.save(state_dict, 'model.pt')
 
-		print("Saving Patched `state_dict` To Disk... ", end="")
+		if self.args.verbose: print("Saving Patched `state_dict` To Disk... ", end="")
 
 		self.evaluate()
 		
-		print("Done!")
+		if self.args.verbose: print("Done!")
 
 	def listen_helper(self, client, address):
-		print(f"Connected To {address}...")
+		if self.args.verbose: print(f"Connected To {address}...")
 		
 		buffer = io.BytesIO()
 		torch.save(self.model.state_dict(), buffer)
@@ -117,11 +117,11 @@ class Server():
 			except ConnectionResetError:
 				break
 		client.close()
-		print(f"Connection To {address} Closed...")
+		if self.args.verbose: print(f"Connection To {address} Closed...")
 
 	def listen(self):
 		self.socket.listen()
-		print(f"Listening On Port {self.socket.getsockname()[1]}")
+		if self.args.verbose: print(f"Listening On Port {self.socket.getsockname()[1]}")
 		while True:
 			client, address = self.socket.accept()
 			thread = threading.Thread(target=self.listen_helper, args=(client, address))
