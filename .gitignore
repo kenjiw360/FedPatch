@@ -2,3 +2,4 @@
 *.pt
 *data*
 __pycache__
+paper

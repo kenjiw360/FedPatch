@@ -5,12 +5,33 @@ from torchvision.models import resnet18
 
 import socket
 import threading
+import pickle
 import struct
+import time
 import io
 
-import pickle
 
 from collections import OrderedDict
+
+def layer_by_layer_patch_stitcher(patches, model, N):
+	state_dict = OrderedDict()
+	for name, param in model.state_dict().items():
+		state_dict[name] = torch.reshape(torch.cat([patch[name] for [addr, N, patch] in patches]).flatten(), param.shape) / N
+	
+	return state_dict
+
+def model_patch_stitcher(patches, model, N):
+	state_dict = model.state_dict()
+	pointer = 0
+
+	vec = torch.cat([patch for [addr, N, patch] in patches], dim=0) / N
+
+	for name in state_dict:
+		num_param = state_dict[name].numel()
+		state_dict[name].data = vec[pointer:pointer + num_param].view_as(state_dict[name]).data
+		pointer += num_param
+	
+	return state_dict
 
 class Server():
 	def __init__(self, model, port, buffer_size, args):
@@ -19,7 +40,7 @@ class Server():
 
 		# Networking Initialisation
 		self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-		self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+		self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 		self.socket.bind(('', port))
 
 		# Buffer Initialisation
@@ -37,22 +58,21 @@ class Server():
 
 		decoded = data.decode().replace("Training Complete, ", "").split(", ")
 
-		size = int(decoded[0])
+		N = int(decoded[0])
 
 		server_info = tuple([decoded[1],int(decoded[2])])
 
-		print(size, server_info)
-
-		self.buffer.append((client, address, size, server_info)) # Add Client Into Buffer
+		self.buffer.append((client, N, address, server_info)) # Add Client Into Buffer
 		if self.args["verbose"]: print(f"Buffer Population: {len(self.buffer)}/{self.buffer_cap}")
 		if len(self.buffer) == self.buffer_cap:
 			if self.args["verbose"]: print("Beginning Decentralised Aggregation...")
 			# Kick Off Decentralised Aggregation
-			for i in range(len(self.buffer)): self.buffer[i][0].sendall(f"Decentralised Aggregation: {', '.join([f'{N}#{address[0]}:{address[1]}#{server_address[0]}:{server_address[1]}' for (client, address, N, server_address) in self.buffer])}".encode())
+			message = f"Decentralised Aggregation: {', '.join([f'{address[0]}:{address[1]}#{server_address[0]}:{server_address[1]}' for (client, N, address, server_address) in self.buffer])}"
+			for i in range(len(self.buffer)):
+				self.buffer[i][0].sendall(message.encode())
 
-			self.patches = [[address, None] for (client, address, N, server_address) in self.buffer]
+			self.patches = [[address, N, None] for (client, N, address, server_address) in self.buffer]
 
-			self.round += 1
 			self.buffer = []
 
 	def stitch(self, client, id):
@@ -67,16 +87,16 @@ class Server():
 			data = client.recv(1024)
 			result += data
 		
-		self.patches[id][1] = pickle.loads(result)
+		self.patches[id][2] = pickle.loads(result)
 
 		for patch_info in self.patches:
-			if patch_info[1] == None: return
+			if patch_info[2] == None: return
 
 		if self.args["verbose"]: print("Received All Patches, Beginning Stitching Process...")
 		
-		state_dict = OrderedDict()
-		for name, param in self.model.state_dict().items():
-			state_dict[name] = torch.reshape(torch.cat([patch[name] for [addr, patch] in self.patches]).flatten(), param.shape)
+		N = sum([patch[1] for patch in self.patches])
+
+		state_dict = model_patch_stitcher(self.patches, self.model, N)
 		
 		if self.args["verbose"]: print("Finished Stitching Together All Patches!")
 
@@ -84,24 +104,37 @@ class Server():
 		self.model.load_state_dict(state_dict)
 		if self.args["verbose"]: print("Done!")
 
-		torch.save(state_dict, 'model.pt')
-
 		if self.args["verbose"]: print("Saving Patched `state_dict` To Disk... ", end="")
+		torch.save(state_dict, f"./checkpoints/rnd{self.round}.pt")
+		if self.args["verbose"]: print("Done!")
+
+		self.patches = {}
+		self.round += 1
+
+		if self.args["patient_training"]:
+				for i in range(self.buffer_cap):
+					with self.args["condition"]:
+						self.args["condition"].notify()
+					print("notifying one person...")
+					time.sleep(0.25)
 
 		self.evaluate()
-		
-		if self.args["verbose"]: print("Done!")
 
 	def listen_helper(self, client, address):
 		if self.args["verbose"]: print(f"Connected To {address}...")
+
+		if self.args["rounds"] == self.round: return client.sendall(struct.pack('>I', 42))
 		
 		buffer = io.BytesIO()
 		torch.save(self.model.state_dict(), buffer)
 		buffer.seek(0)
 
-		for i, [patch_address, patch] in enumerate(self.patches):
+		for i, [patch_address, N, patch] in enumerate(self.patches):
 			if address == patch_address and patch is None:
-				return self.stitch(client, i)
+				self.stitch(client, i)
+				client.close()
+				if self.args["verbose"]: print(f"Connection To {address} Closed...")
+				return
 
 		client.sendall(struct.pack('>I', buffer.getbuffer().nbytes)) # Send Size Of Buffer
 		client.sendall(buffer.read()) # Send Model State In Bytes
@@ -113,7 +146,8 @@ class Server():
 
 				# User Finished Training
 				if data == b"Round Number": client.sendall(struct.pack('>I', self.round))
-				if b"Training Complete, " in data: self.buffer_client(client, address, data)
+				if b"Training Complete, " in data:
+					self.buffer_client(client, address, data)
 			except ConnectionResetError:
 				break
 		client.close()
@@ -129,16 +163,15 @@ class Server():
 
 	def evaluate(self):
 		self.model.eval()
+		testloader = torch.utils.data.DataLoader(self.args["testset"], batch_size=256, shuffle=True, num_workers=0)
+		loss_fn = nn.CrossEntropyLoss().to(self.args["device"])
+
+		num_batches = len(testloader)
+		size = len(self.args["testset"])
+
+		test_loss, correct = 0, 0
 
 		with torch.no_grad():
-			testloader = torch.utils.data.DataLoader(self.args["testset"], batch_size=32, shuffle=True, num_workers=0)
-			loss_fn = nn.CrossEntropyLoss()
-
-			num_batches = len(testloader)
-			size = len(self.args["testset"])
-
-			test_loss, correct = 0, 0
-
 			for inputs, labels in testloader:
 				inputs, labels = inputs.to(device=self.args["device"], non_blocking=True), labels.to(device=self.args["device"], non_blocking=True)
 				outputs = self.model(inputs)
@@ -148,7 +181,7 @@ class Server():
 			test_loss /= num_batches
 			correct /= size
 
-			print(f"Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f}")
+		print(f"=== Round {self.round} Stats ===\nAccuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f}")
 
 if __name__ == "__main__":
 	model = resnet18()
