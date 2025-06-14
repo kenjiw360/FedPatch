@@ -17,7 +17,7 @@ def layer_by_layer_patch_stitcher(patches, model, N):
 	state_dict = OrderedDict()
 	for name, param in model.state_dict().items():
 		state_dict[name] = torch.reshape(torch.cat([patch[name] for [addr, N, patch] in patches]).flatten(), param.shape) / N
-	
+
 	return state_dict
 
 def model_patch_stitcher(patches, model, N):
@@ -30,13 +30,16 @@ def model_patch_stitcher(patches, model, N):
 		num_param = state_dict[name].numel()
 		state_dict[name].data = vec[pointer:pointer + num_param].view_as(state_dict[name]).data
 		pointer += num_param
-	
+
 	return state_dict
 
 class Server():
 	def __init__(self, model, port, buffer_size, args):
 		# Model Initialisation
-		self.model = model
+		self.device = args.device
+
+		self.model = model.to(self.device)
+		self.loss_fn = nn.CrossEntropyLoss().to(self.device)
 
 		# Networking Initialisation
 		self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -51,8 +54,14 @@ class Server():
 		# Patches Initialisation
 		self.patches = {}
 
+
 		self.args = args
-	
+
+	def to(self, device):
+		self.device = device
+		self.model.to(self.device)
+		self.loss_fn.to(self.device)
+
 	def buffer_client(self, client, address, data):
 		if self.args["verbose"]: print(f"Adding {address} To Buffer...")
 
@@ -86,18 +95,18 @@ class Server():
 		while len(result) < data_size:
 			data = client.recv(1024)
 			result += data
-		
+
 		self.patches[id][2] = pickle.loads(result)
 
 		for patch_info in self.patches:
 			if patch_info[2] == None: return
 
 		if self.args["verbose"]: print("Received All Patches, Beginning Stitching Process...")
-		
+
 		N = sum([patch[1] for patch in self.patches])
 
 		state_dict = model_patch_stitcher(self.patches, self.model, N)
-		
+
 		if self.args["verbose"]: print("Finished Stitching Together All Patches!")
 
 		if self.args["verbose"]: print("Loading Patched `state_dict` Into Model... ", end="")
@@ -124,7 +133,7 @@ class Server():
 		if self.args["verbose"]: print(f"Connected To {address}...")
 
 		if self.args["rounds"] == self.round: return client.sendall(struct.pack('>I', 42))
-		
+
 		buffer = io.BytesIO()
 		torch.save(self.model.state_dict(), buffer)
 		buffer.seek(0)
@@ -164,7 +173,6 @@ class Server():
 	def evaluate(self):
 		self.model.eval()
 		testloader = torch.utils.data.DataLoader(self.args["testset"], batch_size=256, shuffle=True, num_workers=0)
-		loss_fn = nn.CrossEntropyLoss().to(self.args["device"])
 
 		num_batches = len(testloader)
 		size = len(self.args["testset"])
@@ -173,21 +181,12 @@ class Server():
 
 		with torch.no_grad():
 			for inputs, labels in testloader:
-				inputs, labels = inputs.to(device=self.args["device"], non_blocking=True), labels.to(device=self.args["device"], non_blocking=True)
+				inputs, labels = inputs.to(device=self.device, non_blocking=True), labels.to(device=self.device, non_blocking=True)
 				outputs = self.model(inputs)
-				test_loss += loss_fn(outputs, labels).item()
+				test_loss += self.loss_fn(outputs, labels).item()
 				correct += (outputs.argmax(1) == labels).type(torch.float).sum().item()
-			
+
 			test_loss /= num_batches
 			correct /= size
 
 		print(f"=== Round {self.round} Stats ===\nAccuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f}")
-
-if __name__ == "__main__":
-	model = resnet18()
-	model.fc = nn.Linear(in_features=512, out_features=10, bias=True)
-	model.to(torch.device("mps"))
-
-	server = Server(model, buffer_cap=2)
-
-	server.listen()

@@ -20,7 +20,7 @@ def layer_by_layer_patch_generator(N, num_patches, model):
 	patches = [OrderedDict() for i in range(num_patches)]
 
 	params = model.state_dict()
-	
+
 	for key in params.keys():
 		params_flat = params[key].flatten()
 		length = int(params_flat.size(0) / num_patches)
@@ -28,7 +28,7 @@ def layer_by_layer_patch_generator(N, num_patches, model):
 			starting_index = length * index
 			ending_index = params_flat.size(0) if num_patches - 1 == index else starting_index + length
 			patches[index][key] = params_flat[starting_index:ending_index].clone() * N
-	
+
 	return patches
 
 def layer_by_layer_patch_aggregator(patch, received_patch):
@@ -46,7 +46,7 @@ def model_patch_generator(N, num_patches, model):
 		starting_index = length * index
 		ending_index = params_flat.size(0) if num_patches - 1 == index else starting_index + length
 		patches.append(params_flat[starting_index:ending_index].clone() * N)
-	
+
 	return patches
 
 def model_patch_aggregator(patch, received_patch):
@@ -75,7 +75,7 @@ class Client():
 
 	def to(self, device):
 		self.device = device
-		
+
 		self.model.to(self.device)
 		self.loss_fn.to(self.device)
 
@@ -99,7 +99,7 @@ class Client():
 		if data_size == 42:
 			print("Server not accepting training request")
 			return False
-		
+
 		if self.args["verbose"]: print(f"Done! ({data_size/1024/1024:.1f}MB)")
 
 		if self.args["verbose"]: print("Fetching Model Weights... ", end="")
@@ -125,7 +125,7 @@ class Client():
 		self.round = b''
 		while len(self.round) < 4:
 			self.round += self.socket.recv(4 - len(self.round))
-		
+
 		self.round = struct.unpack(">I", self.round)[0]
 
 		if self.round is self.last_round:
@@ -135,7 +135,7 @@ class Client():
 			print("Client training on new round")
 
 		self.last_round = self.round
-		
+
 		if self.args["verbose"]: print("Done!")
 
 		return True
@@ -144,7 +144,7 @@ class Client():
 		if self.args["verbose"]: print("Beginning Training...")
 
 		self.model.train()
-		
+
 		current_lr = self.args["lr"]
 
 		optimizer = torch.optim.SGD(self.model.parameters(), lr=current_lr * (self.args["lr_decay"]) ** self.round, weight_decay=self.args["w_decay"], momentum=0.9)
@@ -164,7 +164,7 @@ class Client():
 			end = time.time()
 			train_time = end - start
 			if self.args["verbose"]: print(f"Done! ({train_time:.1f}s)")
-		
+
 		all_finite = all(torch.isfinite(p).all() for p in self.model.parameters())
 		if not all_finite: print("ERROR (STOP TRAINING IMMEDIATELY): non-finite value detected within client parameters after training")
 
@@ -186,7 +186,7 @@ class Client():
 			if self.args["verbose"]: print("Client In Buffer: ", buffer_info[i])
 
 		self.aggregate(buffer_info)
-		
+
 	def aggregate(self, buffer_info):
 		if self.args["verbose"]: print("Beginning Aggregation...")
 		self_info = self.socket.getsockname()
@@ -200,13 +200,13 @@ class Client():
 			return self.disconnect()
 
 		if self.args["verbose"]: print(f"Generating Patches... ", end="")
-		
+
 		patches = model_patch_generator(len(self.dataset), len(buffer_info), self.model)
-		
+
 		if self.args["verbose"]: print("Done!")
 
 		if self.args["verbose"]: print(f"Handling Patch {id}...")
-		
+
 		self.disconnect()
 
 		patches_server_thread = threading.Thread(target=self.patches_server, args=(id, buffer_info, patches))
@@ -232,7 +232,7 @@ class Client():
 					completed_buffer.append(i)
 					index = i
 					break
-			
+
 			if index == -1:
 				if self.args["verbose"]: print("Client Not In Buffer...")
 				client.close()
@@ -249,7 +249,7 @@ class Client():
 		bytes = pickle.dumps(patch)
 		client.sendall(struct.pack('>I', len(bytes)))
 		client.sendall(bytes)
-	
+
 	def compute_patch(self, id, buffer_info, patch):
 		if self.args["verbose"]: print(f"Should Compute Patch {id}...")
 		self.disconnect()
@@ -283,7 +283,7 @@ class Client():
 				result += data
 				num_equals = int(len(result)/data_size*20)
 				if self.args["verbose"]: print(f"Fetching Client {i}'s Model Patch {id} ({len(result)/1024/1024:.1f}MB/{data_size/1024/1024:.1f}MB): [{'=' * num_equals + ' ' * (20 - num_equals)}]", end="\r")
-			
+
 			received_patch = pickle.loads(result)
 
 			if self.args["verbose"]:
@@ -328,33 +328,3 @@ class Client():
 
 	def disconnect(self):
 		self.socket.close()
-
-if __name__ == '__main__':
-	model = resnet18()
-	model.fc = nn.Linear(in_features=512, out_features=10, bias=True)
-
-	loss_fn = nn.CrossEntropyLoss()
-
-	trainset = CIFAR10(root='./data', train=True, download=True, transform=transforms.ToTensor())
-
-	agent_num = int(input("Select Unique Agent Number (0-8): "))
-
-	generator = torch.Generator()
-	generator.manual_seed(42) # The Universe is simply one massive equivalence statement where both sides of the equation are equal to a constant k, where k = 42
-
-	dataset_length = len(trainset)
-
-	client_datasets = random_split(dataset=trainset, lengths=[dataset_length - 8*int(dataset_length/9) if i == 8 else int(dataset_length/9) for i in range(9)], generator=generator)
-
-	client = Client(model, loss_fn, client_datasets[agent_num], {
-		"lr": 0.1,
-		"lr_decay": 0.99,
-		"w_decay": 1e-4,
-		"num_epochs": 2
-	})
-
-	client.to(torch.device("mps"))
-
-	client.connect()
-
-	client.train()
