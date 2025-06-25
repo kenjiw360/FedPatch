@@ -1,7 +1,11 @@
-import torch
+from torch import device, save, load
+
+import lpips
+import breaching
 
 import argparse
 import random
+import json
 import os
 
 from utils import get_model, get_dataset, aggregate_weights, evaluate, get_arguments
@@ -14,17 +18,19 @@ if __name__ == "__main__":
 		if args.verbose: print(message, end=end)
 
 	print("=== Information ===")
-	print(f"Patching Algorithm: {args.patching_algorithm}")
+	# print(f"Patching Algorithm: {args.patching_algorithm}")
 	print(f"Number Of Rounds: {args.num_rounds}")
 	print(f"Number Of Clients Per Round: {args.round_size}")
 	print(f"Number Of Clients In Simulation: {args.num_clients}")
+
+	results = { i: {} for i in range(args.num_rounds) }
 
 	model = None
 	trainset = None
 	testset = None
 
 	# Device Setup
-	device = torch.device(args.device)
+	device = device(args.device)
 
 	# Model Setup
 	model = get_model(args.model, args.data)
@@ -56,7 +62,8 @@ if __name__ == "__main__":
 
 	for i in range(args.num_rounds):
 		print(f"=== Round {i+1}/{args.num_rounds} ===")
-		updates = []
+		naive_updates = []
+		layer_by_layer_updates = []
 
 		participating_clients = random.sample(range(args.num_clients), args.round_size)
 		log(f"Participating Clients: {participating_clients}")
@@ -65,9 +72,19 @@ if __name__ == "__main__":
 			log(f"Training Client {client_id}")
 			universal_client.set_weights(global_weights)
 			universal_client.train(client_id, i, args.num_epochs)
-			updates.append(universal_client.patch_weights(args.patching_algorithm, client_id, args.round_size, args.p))
+			naive_updates.append(universal_client.patch_weights("naive", client_id, args.round_size, args.p))
+			layer_by_layer_updates.append(universal_client.patch_weights("layer-by-layer", client_id, args.round_size, args.p))
+
+		# log("Testing Attack...")
+		# victim_id = random.choice(participating_clients)
+		# log(f"Victim Id: {victim_id}")
 
 		log("Aggregating Weights...")
-		global_weights = aggregate_weights(args.patching_algorithm, args.round_size, args.p, [len(universal_client.datasets[client_id]) for client_id in participating_clients], updates, model)
+		global_weights = aggregate_weights("naive", args.round_size, args.p, [len(universal_client.datasets[client_id]) for client_id in participating_clients], naive_updates, model)
 
-		evaluate(model, universal_client.loss_fn, testset, device)
+		save(model.state_dict(), f"./checkpoints/round{i+1}.pth")
+
+		results[i]["accuracy"] = evaluate(model, universal_client.loss_fn, testset, device)
+
+		with open("results.json", "w") as file:
+			json.dump(results, file, indent=4)

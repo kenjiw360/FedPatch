@@ -78,7 +78,6 @@ def naive_aggregator(K, p, N_list, updates, model):
 
 def layer_by_layer_aggregator(K, p, N_list, updates, model): return OrderedDict({ name: torch.reshape(torch.cat([sum(N_list[j]*update[chunk][name] for j, update in enumerate(updates)) for chunk in range(K*p)]).flatten(), param.shape) / sum(N_list) for name, param in model.state_dict().items() })
 
-
 def aggregate_weights(patching_algorithm, K, p, N_list, updates, model):
 	return {
 		"naive": naive_aggregator,
@@ -106,16 +105,18 @@ def evaluate(model, loss_fn, dataset, device):
 
 		print(f"Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f}")
 
+	return correct
+
 def get_arguments():
 	parser = argparse.ArgumentParser()
 
 	# FedPatch-Exclusive
-	parser.add_argument("--patching_algorithm", type=str, default="naive", choices=["naive", "layer-by-layer"], help="ID of wanted patching algorithm (\"naive\" or \"layer-by-layer\")")
+	# parser.add_argument("--patching_algorithm", type=str, default="naive", choices=["naive", "layer-by-layer"], help="ID of wanted patching algorithm (\"naive\" or \"layer-by-layer\")")
 	parser.add_argument("--p", type=int, default=1, help="FedPatch's P Hyperparameter")
 
 	# Client Arguments
 	parser.add_argument("--data", type=str, default="cifar10", choices=["tinyimagenet", "cifar10"], help="The dataset distributed among clients")
-	parser.add_argument("--num_epochs", type=int, default=3, help="Number of epochs for client training")
+	parser.add_argument("--num_epochs", type=int, default=2, help="Number of epochs for client training")
 	parser.add_argument("--batch_size", type=int, default=32, help="Batch size for client training")
 	parser.add_argument("--lr", type=float, default=0.001, help="Learning rate for client training")
 	parser.add_argument("--lr_decay", type=float, default=0.99, help="Learning rate decay for client training")
@@ -134,6 +135,6 @@ def get_arguments():
 	parser.add_argument("--verbose", action="store_true", help="Enable verbose output")
 	parser.add_argument("--device", type=str, default="cuda", choices=["cuda", "mps", "cpu"], help="Device to use for training")
 	parser.add_argument("--model", type=str, default="resnet18", choices=["resnet18", "vgg16"], help="AI model that will be trained")
-	parser.add_argument("--num_clients", type=int, default=5000, help="Number of clients")
+	parser.add_argument("--num_clients", type=int, default=20, help="Number of clients")
 
 	return parser.parse_args()

@@ -1,5 +1,6 @@
 .DS_STORE
-*.pt
+*.pt*
 *data*
 __pycache__
 paper
+results.json
